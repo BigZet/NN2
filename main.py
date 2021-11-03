@@ -3,8 +3,8 @@ import struct
 from functools import reduce
 from scipy.optimize import minimize
 import scipy
-scipy.optimize.OptimizeResult
 from matplotlib import pyplot as plt
+import paho.mqtt.client as mqtt
 
 # Вам предлагается обучить трехслойную нейронную сеть прямого распространения с сигмоидальными функциями активации на
 # наборе данных MNIST - множестве изображений рукописных цифр и соответствующих метках 0-9.
@@ -19,11 +19,11 @@ from matplotlib import pyplot as plt
 # Так вы сможете проверить себя.
 
 # Ниже заданы "константы", с которыми можно "поиграть" - поварьировать их и посмотреть, что будет.
-HIDDEN_LAYER_SIZE = 25  # Количество нейронов в скрытом слое.
+HIDDEN_LAYER_SIZE = 225  # Количество нейронов в скрытом слое.
 
 # Всего у вас есть 60 000 изображений, поэтому сумма следующих двух констант не должна быть больше 60 000.
-SAMPLES_TO_TRAIN = 1000  # Количество примеров в обучающей выборка, на ней будет производить подбор параметров модели.
-SAMPLES_TO_TEST = 100  # Количество примеров в тестовой выборке, на ней будет оцениваться качество модели.
+SAMPLES_TO_TRAIN = 11000  # Количество примеров в обучающей выборка, на ней будет производить подбор параметров модели.
+SAMPLES_TO_TEST = 1000  # Количество примеров в тестовой выборке, на ней будет оцениваться качество модели.
 
 
 def one_hot_encode(y):
@@ -122,9 +122,12 @@ def compute_hypothesis(X, theta):
     return H, Z2, A2
 
 
-
+timer = 0
 
 def compute_cost(X, Y, theta, lamb):
+    global timer
+    timer+=1
+    print(timer)
 
     # Функция принимает матрицу данных X без фиктивного признака, вектор верных классов y,
     # вектор параметров theta и параметр регуляризации lamb.
@@ -179,34 +182,64 @@ def compute_cost_grad(X, Y, theta, lamb):
 
     X = X.T
     Y = np.array([one_hot_encode(i) for i in Y]).T
-    sigm_grad_2_arg = Theta2 @ A2
-    sigm_grad_2 = logistic_grad(sigm_grad_2_arg)
-    error_output = H - Y
-    error_hidden = Theta2.T @ (error_output * sigm_grad_2)
-    sigm_grad_1_arg = Theta1 @ X
-    sigm_grad_1 = logistic_grad(sigm_grad_1_arg)
-    grad2 = (error_output * sigm_grad_2) @ A2.T
 
-    print(f"""
-                Дополнительная справка:
-                {H.shape=},
-                {Z2.shape=},
-                {A2.shape=},
-                {Theta1.shape=},
-                {Theta2.shape=},
-                {X.shape=},
-                {Y.shape=},
-                {sigm_grad_2_arg.shape=}
-                {sigm_grad_2.shape=}
-                {error_output.shape=}
-                {error_hidden.shape=}
-                {sigm_grad_1_arg.shape=}
-                {sigm_grad_1.shape=}
-                {grad2.shape=}
-                """)
-    grad1 = (error_hidden[:-1, :] * sigm_grad_1) @ X.T
-    Theta1_grad = grad1
-    Theta2_grad = grad2
+    # print(f"""
+    #     Дополнительная справка:
+    #         {H.shape=},
+    #         {Z2.shape=},
+    #         {A2.shape=},
+    #         {Theta1.shape=},
+    #         {Theta2.shape=},
+    #         {X.shape=},
+    #         {Y.shape=},""")
+    mdel3 = H - Y
+    mdel2 = Theta2.T[:-1,] @ mdel3 * logistic_grad(Theta1 @ X)
+    del3 = mdel3 @ A2.T
+    del2 = mdel2 @ X.T
+    Theta2_grad = (del3 + lamb * Theta2)/mdel3.shape[1]
+    Theta1_grad = (del2 + lamb * Theta1) / mdel2.shape[1]
+    # del3 = np.sum(A2 @ mdel3.T, axis=1)
+    # del2 = np.sum(X @ mdel2.T, axis=1)
+    # D3=[]
+    # for i in range(del3.shape[0]):
+    #     D3.append(1/mdel3.shape[1]*del3[i] + lamb/mdel3.shape[1]*Theta2)
+
+    # print(f"""
+    #             {mdel3.shape=},
+    #             {mdel2.shape=},
+    #             {del3.shape=}
+    #             {del2.shape=}
+    #             {Theta1_grad.shape=}
+    #             {Theta2_grad.shape=}
+    #             """)
+    # sigm_grad_2_arg = Theta2 @ A2
+    # sigm_grad_2 = logistic_grad(sigm_grad_2_arg)
+    # error_output = H - Y
+    # error_hidden = Theta2.T @ (error_output * sigm_grad_2)
+    # sigm_grad_1_arg = Theta1 @ X
+    # sigm_grad_1 = logistic_grad(sigm_grad_1_arg)
+    # grad2 = (error_output * sigm_grad_2) @ A2.T
+
+    # print(f"""
+    #             Дополнительная справка:
+    #             {H.shape=},
+    #             {Z2.shape=},
+    #             {A2.shape=},
+    #             {Theta1.shape=},
+    #             {Theta2.shape=},
+    #             {X.shape=},
+    #             {Y.shape=},
+    #             {sigm_grad_2_arg.shape=}
+    #             {sigm_grad_2.shape=}
+    #             {error_output.shape=}
+    #             {error_hidden.shape=}
+    #             {sigm_grad_1_arg.shape=}
+    #             {sigm_grad_1.shape=}
+    #             {grad2.shape=}
+    #             """)
+    # grad1 = (error_hidden[:-1, :] * sigm_grad_1) @ X.T
+    # Theta1_grad = grad1
+    # Theta2_grad = grad2
     #grad1 = (error_hidden[:, :] * Theta1 @ X) @ X.T
 
 
@@ -268,77 +301,108 @@ print(f'logistic_grad(0) = {logistic_grad(np.array(0))} (должно быть ~
 # plt.pcolor(hm, cmap='Greys')
 # plt.show()
 #
-lamb = 0.5  # можно поварьировать параметр регуляризации и посмотреть, что будет
+lamb = 0.25  # можно поварьировать параметр регуляризации и посмотреть, что будет
 
 init_Theta1 = np.random.uniform(-0.12, 0.12, (HIDDEN_LAYER_SIZE, X.shape[1] + 1))
 init_Theta2 = np.random.uniform(-0.12, 0.12, (10, HIDDEN_LAYER_SIZE + 1))
 
 init_theta = np.concatenate((init_Theta1, init_Theta2), axis=None)
 
-print(compute_hypothesis(X, init_theta)[0])
-
-#compute_cost_grad(X, Y, init_theta, lamb)
+compute_cost_grad(X, Y, init_theta, lamb)
 
 
-# back_prop_grad = compute_cost_grad(X[:11], Y[:11], init_theta, 0)
-# 
-# print('Запуск численного расчета градиента (может занять какое-то время)')
+
+back_prop_grad = compute_cost_grad(X[:11], Y[:11], init_theta, 0)
+
+#print('Запуск численного расчета градиента (может занять какое-то время)')
 # num_grad = compute_cost_grad_approx(X[:11], Y[:11], init_theta, 0)
-# 
-# print('Градиент, посчитанный аналитически: ')
-# print(back_prop_grad)
-# 
+
+print('Градиент, посчитанный аналитически: ')
+print(back_prop_grad)
+#
 # print('Градиент, посчитанный численно (должен примерно совпадать с предыдущим): ')
 # print(num_grad)
-# 
+#
 # print()
 # print('Относительное отклоение градиентов (должно быть < 1e-7): ')
 # print((np.linalg.norm(back_prop_grad - num_grad) / np.linalg.norm(back_prop_grad + num_grad)))
-# 
-# print()
-# print('Запуск оптимизации параметров сети (может занять какое-то время)')
-# opt_theta_obj = minimize(lambda th: compute_cost(X, Y, th, lamb), init_theta,
-#                           method='CG',
-#                           jac=lambda th: compute_cost_grad(X, Y, th, lamb),
-#                           options={'gtol': 1e-3, 'maxiter': 3000, 'disp': False})
-#
-# print('Минимизация функции стоимости ' + ('прошла успешно.' if opt_theta_obj.success else 'не удалась.'))
-# print(opt_theta_obj)
-#
-# opt_theta = opt_theta_obj.x
-# print('Функция стоимости при оптимальных параметрах (должна быть < 0.5): ')
-# print(compute_cost(X, Y, opt_theta, lamb))
-#
-# hypos_train = compute_hypothesis(X, opt_theta)[0]
-#
-# true_preds_train_num = 0
-# for k in range(hypos_train.shape[0]):
-#     max_el = np.max(hypos_train[k, :])
-#     true_preds_train_num += list(np.array(hypos_train[k, :] == max_el, dtype=np.int32)) == list(one_hot_encode(y[k]))
-# print('Доля верно распознаных цифр в обучающем наборе:', true_preds_train_num / hypos_train.shape[0] * 100, '%')
-#
-# hypos_test = compute_hypothesis(X_test, opt_theta)[0]
-#
-# true_preds_test_num = 0
-# for k in range(hypos_test.shape[0]):
-#     max_el = np.max(hypos_test[k, :])
-#     true_preds_test_num += list(np.array(hypos_test[k, :] == max_el, dtype=np.int32)) == list(one_hot_encode(y_test[k]))
-# print('Доля верно распознаных цифр в тестовом наборе:', true_preds_test_num / hypos_test.shape[0] * 100, '%')
-#
-# if HIDDEN_LAYER_SIZE ** 0.5 % 1.0 == 0:
-#     Theta1 = opt_theta[:HIDDEN_LAYER_SIZE * (X.shape[1] + 1)].reshape(HIDDEN_LAYER_SIZE, X.shape[1] + 1)
-#     Theta1 = Theta1[:, 1:]
-#     Theta1 = (Theta1 - Theta1.mean(axis=0)) / (Theta1.std(axis=0))
-#     Theta1 = Theta1.reshape(HIDDEN_LAYER_SIZE, 28, 28)
-#     im_size = int(features.shape[1] ** 0.5)
-#     size_imgs = int(HIDDEN_LAYER_SIZE ** 0.5)
-#     hm = np.zeros((im_size * size_imgs, im_size * size_imgs))
-#     for i in range(HIDDEN_LAYER_SIZE):
-#         im_x = i % size_imgs * im_size
-#         im_y = i // size_imgs * im_size
-#         for j in range(features.shape[1]):
-#             px_x = im_x + j % im_size
-#             px_y = im_y + j // im_size
-#             hm[size_imgs * im_size - 1 - px_x, px_y] = Theta1[i, j % im_size, j // im_size]
-#     plt.pcolor(hm, cmap='Greys')
-#     plt.show()
+
+HOST = "broker.hivemq.com"
+PORT = 1883
+KEEPALIVE = 60
+client =  mqtt.Client()
+client.connect(HOST,PORT, KEEPALIVE)
+client.publish("public/nn", "Start computing")
+
+configs = [
+        [11000, 64, 0]
+]
+
+for i in configs:
+    timer = 0
+    HIDDEN_LAYER_SIZE = i[1]
+    SAMPLES_TO_TRAIN=i[0]
+    temp = 0
+    X = features[:SAMPLES_TO_TRAIN]
+    Y = labels[:SAMPLES_TO_TRAIN]
+    init_Theta1 = np.random.uniform(-0.12, 0.12, (HIDDEN_LAYER_SIZE, X.shape[1] + 1))
+    init_Theta2 = np.random.uniform(-0.12, 0.12, (10, HIDDEN_LAYER_SIZE + 1))
+
+    init_theta = np.concatenate((init_Theta1, init_Theta2), axis=None)
+    print(f"lambda = {i}")
+    print()
+    print('Запуск оптимизации параметров сети (может занять какое-то время)')
+    opt_theta_obj = minimize(lambda th: compute_cost(X, Y, th, i[2]), init_theta,
+                             method='CG',
+                             jac=lambda th: compute_cost_grad(X, Y, th, i[2]),
+                             options={'gtol': 1e-3, 'maxiter': 3000, 'disp': False})
+
+    print('Минимизация функции стоимости ' + ('прошла успешно.' if opt_theta_obj.success else 'не удалась.'))
+    print(opt_theta_obj)
+
+    opt_theta = opt_theta_obj.x
+    print('Функция стоимости при оптимальных параметрах (должна быть < 0.5): ')
+    temp = compute_cost(X, Y, opt_theta, i[2])
+    print(temp)
+    client.publish("public/nn",
+                   f"For lamb = {i[2]}, H={HIDDEN_LAYER_SIZE}, size = {SAMPLES_TO_TRAIN} have Q={round(temp, 4)}, iter={timer - 1}")
+    hypos_train = compute_hypothesis(X, opt_theta)[0]
+
+    true_preds_train_num = 0
+    for k in range(hypos_train.shape[0]):
+        max_el = np.max(hypos_train[k, :])
+        true_preds_train_num += list(np.array(hypos_train[k, :] == max_el, dtype=np.int32)) == list(
+            one_hot_encode(Y[k]))
+    print('Доля верно распознаных цифр в обучающем наборе:', true_preds_train_num / hypos_train.shape[0] * 100, '%')
+
+    hypos_test = compute_hypothesis(X_test, opt_theta)[0]
+
+    true_preds_test_num = 0
+    for k in range(hypos_test.shape[1]):
+        max_el = np.argmax(hypos_test[:, k])
+        print(f"{len(hypos_test[:, k])=}")
+        print(f"{max_el=}")
+        print(f"{y_test[k]=}")
+        true_preds_test_num += max_el == int(y_test[k])
+    print('Доля верно распознаных цифр в тестовом наборе:', true_preds_test_num / hypos_test.shape[1] * 100, '%')
+
+    if HIDDEN_LAYER_SIZE ** 0.5 % 1.0 == 0:
+        Theta1 = opt_theta[:HIDDEN_LAYER_SIZE * (X.shape[1] + 1)].reshape(HIDDEN_LAYER_SIZE, X.shape[1] + 1)
+        Theta1 = Theta1[:, 1:]
+        Theta1 = (Theta1 - Theta1.mean(axis=0)) / (Theta1.std(axis=0))
+        Theta1 = Theta1.reshape(HIDDEN_LAYER_SIZE, 28, 28)
+        im_size = int(features.shape[1] ** 0.5)
+        size_imgs = int(HIDDEN_LAYER_SIZE ** 0.5)
+        hm = np.zeros((im_size * size_imgs, im_size * size_imgs))
+        for i in range(HIDDEN_LAYER_SIZE):
+            im_x = i % size_imgs * im_size
+            im_y = i // size_imgs * im_size
+            for j in range(features.shape[1]):
+                px_x = im_x + j % im_size
+                px_y = im_y + j // im_size
+                hm[size_imgs * im_size - 1 - px_x, px_y] = Theta1[i, j % im_size, j // im_size]
+        plt.pcolor(hm, cmap='Greys')
+        plt.show()
+
+
+
